@@ -1,97 +1,100 @@
-# BrowserForensicsAD1 - Autopsy Ingest Module
+# AD1 Universal Extractor & Forensics Suite for Autopsy
 
-An advanced **Autopsy Digital Forensics Plugin** that extracts split AccessData `.ad1` logical images (including multi-part `.ad1`, `.ad2`, `.ad3`, `.ad4` containers) and automatically parses browser artifacts across all user profiles into Autopsy's native Blackboard results.
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Autopsy Version](https://img.shields.io/badge/Autopsy-4.20%2B%20%7C%204.23%2B-green.svg)](https://www.autopsy.com/)
+[![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)](https://www.sleuthkit.org/)
+
+An advanced, universal **Autopsy Digital Forensics Ingest Module** that unpacks single and multi-segment AccessData `.ad1` logical evidence containers (`.ad1`, `.ad2`, `.ad3`, `.ad4`...) and automatically mounts them into Autopsy as native Logical Files Data Sources.
+
+Additionally includes an automated **Artifact Triage Engine** that parses browser and system databases directly into Autopsy's Blackboard without requiring extra ingest runs.
+
+---
+
+## 🎯 Why This Plugin Exists
+
+Autopsy natively relies on The Sleuth Kit (TSK) to read raw sectors and partition tables (MBR/GPT) of physical disk images (`.raw`, `.dd`, `.E01`). Because AccessData `.ad1` files are proprietary logical containers (similar to forensic compressed archives), **Autopsy cannot natively ingest AD1 files as disk images**.
+
+Previous community plugins (such as legacy `AD1_Extractor`) suffered from critical bugs:
+* **The `.ad1.csv` / `.ad1.txt` Crash**: When FTK Imager created companion export reports in the same directory, the extractor crashed attempting to parse report extensions as segment numbers (`invalid literal for int(): '1.csv'`).
+* **The `hashMetadata` Crash**: A variable scoping bug caused directory parsing to crash with `local variable 'hashMetadata' referenced before assignment`.
+* **Mangled Folder Trees**: Concatentation bugs nested subdirectories infinitely.
+* **Autopsy 4.20+ `ClassCastException`**: Obsolete API calls tried to notify Autopsy on each individual file instead of the data source object.
+
+**This suite completely fixes all of these issues**, providing a stable, high-performance extraction and triage workflow for modern Autopsy.
 
 ---
 
 ## 🚀 Key Features
 
-* **Complete AD1 Multi-Segment Support**: Handles single and segmented custom content images (`.ad1`, `.ad2`, `.ad3`, `.ad4`...) created by FTK Imager.
-* **Resilient Segment Parsing**: Properly handles directory companion files (ignores `.ad1.csv`, `.ad1.txt`, and log files without crashing).
-* **Multi-Profile Browser Triage**: Recursively parses all browser profiles (`Default`, `Profile 1`, `Profile 2`, `Guest Profile`, etc.).
-* **Zero Extra Ingest Steps**: Extracted browser databases (`History`, `Cookies`, `Login Data`, `Bookmarks`, `Web Data`, `Preferences`, `places.sqlite`) are parsed immediately during data source ingestion.
-* **Autopsy 4.20+ / 4.23+ Compatible**: Fixes the legacy `ClassCastException` present in older community plugins.
-
----
-
-## 🌐 Supported Browsers & Artifacts
-
-| Browser Family | Supported Browsers | Artifacts Extracted | Blackboard Type |
-|---|---|---|---|
-| **Chromium** | Google Chrome, Microsoft Edge, Brave, Opera, Vivaldi | Browsing History & Visits | `TSK_WEB_HISTORY` |
-| | | Download History & Target Paths | `TSK_WEB_DOWNLOAD` |
-| | | Search Engine Queries | `TSK_WEB_SEARCH_QUERY` |
-| | | Web Cookies & Expiration Dates | `TSK_WEB_COOKIE` |
-| | | Saved Web Accounts / Logins | `TSK_SERVICE_ACCOUNT` |
-| | | Bookmarks Hierarchy | `TSK_WEB_BOOKMARK` |
-| | | Form Autofill Data | `TSK_WEB_AUTOFILL` |
-| | | Top Sites & Shortcuts | `TSK_WEB_HISTORY` |
-| | | Installed Extensions | `TSK_BROWSER_EXTENSION` |
-| **Mozilla** | Firefox, Waterfox, LibreWolf | Places History & Bookmarks | `TSK_WEB_HISTORY` / `TSK_WEB_BOOKMARK` |
-| | | Downloaded Files | `TSK_WEB_DOWNLOAD` |
-| | | Cookies | `TSK_WEB_COOKIE` |
-| | | Form History | `TSK_WEB_AUTOFILL` |
-| | | Saved Logins (`logins.json`) | `TSK_SERVICE_ACCOUNT` |
+* **Universal AD1 Unpacking**: Extracts **any** `.ad1` container created by FTK Imager (User Profiles `C:\Users\<user>`, Windows Registry, USB Triage, Documents, Network captures).
+* **Multi-Segment Support**: Seamlessly combines split images (`.ad1`, `.ad2`, `.ad3`, `.ad4`...) of arbitrary sizes.
+* **Automatic Native Data Source Mount**: Mounts the extracted directory tree directly into Autopsy so standard modules (Keyword Search, Hash Lookup, File Type Identification, Recent Activity, PhotoRec Carver) can run immediately.
+* **Integrated Metadata Catalog**: Every file's original timestamps (MACB) and cryptographic hashes (MD5, SHA-1) are preserved and indexed under `AD1 Extracted File Info`.
+* **Out-of-the-Box Browser Triage**:
+  * **Chromium (Chrome, Edge, Brave, Opera, Vivaldi)**: History, Downloads, Search Queries, Cookies, Saved Web Accounts (`Login Data`), Bookmarks, Autofill, and Extensions.
+  * **Mozilla (Firefox, LibreWolf, Waterfox)**: Places (`places.sqlite`), Bookmarks, Downloads, Cookies, Form History, and Logins (`logins.json`).
 
 ---
 
 ## 📦 Installation
 
 1. Open **Autopsy**.
-2. Navigate to **Tools** → **Python Plugins**.
-3. This opens your Autopsy Python modules folder:
+2. Go to **Tools** → **Python Plugins**.
+3. Autopsy will open the local Python modules directory:
    ```text
    %APPDATA%\autopsy\python_modules\
    ```
-4. Clone or download this repository into a folder named `BrowserForensicsAD1`:
+4. Clone or copy this repository into a folder named `AD1_Universal_Extractor`:
    ```bash
    cd %APPDATA%\autopsy\python_modules\
-   git clone https://github.com/<your-username>/Autopsy-BrowserForensicsAD1.git BrowserForensicsAD1
+   git clone https://github.com/<your-username>/Autopsy-AD1-Universal-Suite.git AD1_Universal_Extractor
    ```
-5. Restart Autopsy so it detects the new ingest module.
+5. Restart Autopsy.
 
 ---
 
-## 🔍 How to Use
+## 🔍 How to Ingest an AD1 Image
+
+> **Important**: Always add `.ad1` files as **Logical Files**, never as *Disk Image*.
 
 1. Open or create an Autopsy case.
 2. Click **Add Data Source**.
-3. Choose **Logical Files** as the data source type (do not choose Disk Image).
-4. Browse to and select your `.ad1` file (e.g. `Evidence.ad1`).
-5. On the **Configure Ingest Modules** screen, ensure:
-   * ☑️ **Browser Forensics AD1 - Extractor** is checked.
+3. Select **Logical Files** as the data source type.
+4. Browse to and select your primary `.ad1` file (e.g. `Evidence.ad1`). All subsequent split segments (`.ad2`, `.ad3`...) in the same folder are automatically resolved.
+5. In the **Configure Ingest Modules** list, check:
+   * ☑️ **AD1 Universal Extractor & Forensics Suite**
 6. Click **Finish**.
-
-The plugin will:
-1. Unpack all files from the multi-segment AD1 image into your case output directory.
-2. Index every file's metadata and hashes into an SQLite catalog.
-3. Parse all browser history, downloads, cookies, logins, bookmarks, and autofill directly into the Blackboard.
-4. Mount the unpacked file structure as a searchable data source in Autopsy.
 
 ---
 
-## 🛠️ Repository Structure
+## 📊 Extracted Artifacts Overview
+
+| Category | Artifact Description | Blackboard Type |
+|---|---|---|
+| **File System** | AD1 Container File Metadata & Hashes | `TSK_AD1_FILE_INFO` |
+| **Web Activity** | Visited URLs, Visit Counts, Timestamps | `TSK_WEB_HISTORY` |
+| **Web Search** | Search Engine Queries | `TSK_WEB_SEARCH_QUERY` |
+| **Downloads** | File Destination Paths, Source URLs, Timestamps | `TSK_WEB_DOWNLOAD` |
+| **Web Accounts** | Saved Login Credentials & Domains | `TSK_SERVICE_ACCOUNT` |
+| **Cookies** | Cookie Names, Values, Domains, Expiration | `TSK_WEB_COOKIE` |
+| **Bookmarks** | Full Bookmark Tree Hierarchy & URLs | `TSK_WEB_BOOKMARK` |
+| **Autofill** | Web Form Field Names, Values, Counts | `TSK_WEB_AUTOFILL` |
+| **Extensions** | Browser Extensions, Versions, Descriptions | `TSK_BROWSER_EXTENSION` |
+
+---
+
+## 🛠️ Repository Layout
 
 ```text
-Autopsy-BrowserForensicsAD1/
-├── BrowserForensicsAD1.py          # Autopsy Ingest Module (Jython 2.7)
-├── extract_ad1.exe                 # 64-bit Standalone AD1 Extractor Binary
+Autopsy-AD1-Universal-Suite/
+├── AD1_Universal_Extractor.py     # Autopsy Ingest Module (Jython 2.7)
+├── extract_ad1.exe                # 64-bit Standalone AD1 Extractor Binary
 ├── src/
-│   └── extract_ad1_fixed.py        # Python 3 source code for the extractor
-├── LICENSE                         # Apache License 2.0
+│   └── extract_ad1_fixed.py       # Python 3 source code for the extractor
+├── LICENSE                        # Apache License 2.0
 ├── .gitignore
 └── README.md
 ```
-
----
-
-## 🐛 Bug Fixes Over Legacy Plugins
-
-This module resolves major issues found in older AD1 extractor plugins:
-1. **Integer Parsing Crash on Companion Files**: Older plugins ran `int(extension.rsplit('.ad', 1)[1])`. When FTK Imager created `Image.ad1.csv` or `Image.ad1.txt`, it attempted `int('1.csv')`, crashing before extracting a single file. Fixed using strict regex matching `\.ad(\d+)$`.
-2. **`hashMetadata` Variable Reference Error**: Fixed an uninitialized variable bug that aborted folder entry parsing.
-3. **Mangled Directory Hierarchy**: Fixed path concatenation bugs so directory trees are extracted accurately.
-4. **Autopsy 4.20+ ClassCastException**: Fixed an invalid file notification loop that threw `ClassCastException` on modern SleuthKit versions.
 
 ---
 
