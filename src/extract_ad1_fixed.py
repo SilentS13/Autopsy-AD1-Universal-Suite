@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-extract_ad1_fixed.py - Robust AccessData AD1 Extractor
-Extracts all files and metadata from AD1 images into a destination folder
-and builds an SQLite index compatible with Autopsy.
+extract_ad1_fixed.py - Robust AccessData AD1 Extractor & Cache Carver
+Extracts all files and metadata from AD1 images into a destination folder,
+builds an SQLite index compatible with Autopsy, and carves media/documents
+from browser cache streams (f_######).
 
 Fixes all bugs from the original extract_ad1.exe:
 1. Ignores .ad1.txt, .ad1.csv, and non-segment files in the image directory.
@@ -11,6 +12,7 @@ Fixes all bugs from the original extract_ad1.exe:
 3. Preserves the exact nested directory structure using parent_path.
 4. Uses SQLite transactions for fast bulk inserts.
 5. Sanitizes file and directory names safely for Windows filesystems.
+6. Automatically carves and decompresses JPEG/PNG/WebP/MP4/HTML from browser cache.
 """
 
 import sys
@@ -273,7 +275,7 @@ def process_metadata(metadata):
                 res["File Size"] = int(fm[3].decode('utf-8', errors='ignore'))
             except:
                 pass
-        if 4 in fm:  # Fixed: previously had bug checking hashMetadata instead of fm!
+        if 4 in fm:
             try:
                 res["Physical File Size"] = int(fm[4].decode('utf-8', errors='ignore'))
             except:
@@ -306,9 +308,118 @@ def process_metadata(metadata):
     return res
 
 
-def sanitize_filename(name):
-    """Sanitize illegal characters for Windows filenames."""
-    return re.sub(r'[\\/*?:"<>|]', '_', name)
+def carve_browser_cache(output_dir, cursor, insert_sql):
+    """
+    Scans unpacked browser cache directories (f_###### files), identifies
+    embedded media signatures, decompresses gzip streams, and carves out
+    actual images, videos, and documents into a Carved_Browser_Cache folder.
+    Also indexes each carved asset into the SQLite database.
+    """
+    output_base = os.path.join(output_dir, "Carved_Browser_Cache")
+    total_carved = 0
+    batch = []
+
+    for root, dirs, files in os.walk(output_dir):
+        if "Carved_Browser_Cache" in root:
+            continue
+        if not ("Cache_Data" in root or "Cache" in root):
+            continue
+
+        cache_files = [f for f in files if f.startswith("f_")]
+        if not cache_files:
+            continue
+
+        # Extract profile name
+        rel = os.path.relpath(root, output_dir)
+        parts = rel.split(os.sep)
+        profile_name = "Default"
+        for p in parts:
+            if "profile" in p.lower() or p.lower() == "default":
+                profile_name = p
+                break
+
+        profile_out = os.path.join(output_base, profile_name)
+        os.makedirs(profile_out, exist_ok=True)
+
+        for fname in cache_files:
+            fp = os.path.join(root, fname)
+            try:
+                with open(fp, "rb") as f_in:
+                    data = f_in.read()
+            except:
+                continue
+            if len(data) < 16:
+                continue
+
+            is_gzip = data.startswith(b"\x1f\x8b")
+            payload = data
+            if is_gzip:
+                try:
+                    payload = zlib.decompress(data, 16 + zlib.MAX_WBITS)
+                except:
+                    payload = data
+
+            ext = None
+            if payload.startswith(b"\xff\xd8\xff"):
+                ext = "jpg"
+            elif payload.startswith(b"\x89PNG\r\n\x1a\n"):
+                ext = "png"
+            elif payload.startswith(b"GIF87a") or payload.startswith(b"GIF89a"):
+                ext = "gif"
+            elif payload[:4] == b"RIFF" and payload[8:12] == b"WEBP":
+                ext = "webp"
+            elif payload.startswith(b"%PDF"):
+                ext = "pdf"
+            elif payload.startswith(b"\x00\x00\x01\x00"):
+                ext = "ico"
+            elif b"<svg" in payload[:200]:
+                ext = "svg"
+            elif b"<!DOCTYPE html" in payload[:200].lower() or b"<html" in payload[:200].lower():
+                ext = "html"
+            elif len(payload) > 8 and payload[4:8] == b"ftyp":
+                ext = "mp4"
+            elif payload.startswith(b"\x1a\x45\xdf\xa3"):
+                ext = "webm"
+
+            if ext:
+                carved_name = f"{fname}.{ext}"
+                target_path = os.path.join(profile_out, carved_name)
+                try:
+                    with open(target_path, "wb") as f_out:
+                        f_out.write(payload)
+
+                    md5 = hashlib.md5(payload).hexdigest()
+                    sha1 = hashlib.sha1(payload).hexdigest()
+                    cur_time = int(time.time())
+
+                    row = (
+                        f"Carved_Browser_Cache/{profile_name}",
+                        "0",
+                        profile_out,
+                        carved_name,
+                        len(payload),
+                        len(payload),
+                        cur_time,
+                        cur_time,
+                        cur_time,
+                        cur_time,
+                        md5,
+                        sha1
+                    )
+                    batch.append(row)
+                    total_carved += 1
+
+                    if len(batch) >= 500:
+                        cursor.executemany(insert_sql, batch)
+                        batch = []
+                except:
+                    pass
+
+    if batch:
+        cursor.executemany(insert_sql, batch)
+
+    if total_carved > 0:
+        print(f"Browser Cache Carving: successfully recovered {total_carved} media assets into Carved_Browser_Cache.")
 
 
 def main():
@@ -383,7 +494,6 @@ def main():
         with SafeAD1Reader(ad1_file) as reader:
             for item_type, parent_path, filename, metadata, content in reader:
                 try:
-                    # Clean relative path
                     rel_dir = parent_path.lstrip('/\\')
                     target_dir = os.path.join(output_dir, rel_dir) if rel_dir else output_dir
 
@@ -433,6 +543,11 @@ def main():
             conn.commit()
 
         print("Extraction complete: %d files, %d folders." % (file_count, dir_count))
+
+        # --- Automatically Carve Browser Cache ---
+        print("Starting automated browser cache carving...")
+        carve_browser_cache(output_dir, cursor, insert_sql)
+        conn.commit()
 
     except Exception as ex:
         print("Fatal extraction error: %s" % ex)

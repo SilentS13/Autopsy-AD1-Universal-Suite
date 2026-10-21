@@ -422,6 +422,10 @@ class AD1UniversalExtractorModule(DataSourceIngestModule):
                 elif fl == "logins.json":
                     self._parse_firefox_logins_json(source_file, full_path)
 
+                # --- Carved Browser Cache Media (Images, Videos, Documents) ---
+                elif "carved_browser_cache" in root.lower():
+                    self._parse_carved_cache_file(source_file, full_path, fname, browser_name)
+
     def _detect_browser_from_path(self, path):
         pl = path.lower()
         if "firefox" in pl or "mozilla" in pl:
@@ -827,5 +831,23 @@ class AD1UniversalExtractorModule(DataSourceIngestModule):
                 attrs.add(BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_PROG_NAME, modName, "Mozilla Firefox"))
                 art.addAttributes(attrs)
                 self._post_to_blackboard(art)
+        except:
+            pass
+
+    def _parse_carved_cache_file(self, source_file, full_path, fname, browser_name):
+        modName = AD1UniversalExtractorModuleFactory.moduleName
+        try:
+            art = source_file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_WEB_CACHE)
+            attrs = ArrayList()
+            attrs.add(BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_PATH, modName, full_path))
+            attrs.add(BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_NAME, modName, fname))
+            attrs.add(BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_PROG_NAME, modName, browser_name))
+            try:
+                sz = os.path.getsize(full_path)
+                attrs.add(BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_BYTES_SENT, modName, long(sz)))
+            except:
+                pass
+            art.addAttributes(attrs)
+            self._post_to_blackboard(art)
         except:
             pass

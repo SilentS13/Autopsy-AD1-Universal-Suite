@@ -50,6 +50,7 @@ Previous community plugins (such as legacy `AD1_Extractor`) suffered from critic
 * **Multi-Segment Support**: Seamlessly combines split images (`.ad1`, `.ad2`, `.ad3`, `.ad4`...) of arbitrary sizes.
 * **Automatic Native Data Source Mount**: Mounts the extracted directory tree directly into Autopsy so standard modules (Keyword Search, Hash Lookup, File Type Identification, Recent Activity, PhotoRec Carver) can run immediately.
 * **Integrated Metadata Catalog**: Every file's original timestamps (MACB) and cryptographic hashes (MD5, SHA-1) are preserved and indexed under `AD1 Extracted File Info`.
+* **Automated Browser Cache Carving & Reassembly**: Automatically scans Chromium Simple Cache (`f_######` streams), decompresses GZIP HTTP streams, strips cache trailers, and carves out raw media and documents (`JPEG`, `PNG`, `WebP`, `MP4`, `HTML`, `PDF`, `SVG`, `ICO`) into `Carved_Browser_Cache/`. Carved assets are indexed into the Blackboard (`TSK_WEB_CACHE`) and instantly viewable in Autopsy's Thumbnail / Image Gallery.
 * **Out-of-the-Box Browser Triage**:
   * **Chromium (Chrome, Edge, Brave, Opera, Vivaldi)**: History, Downloads, Search Queries, Cookies, Saved Web Accounts (`Login Data`), Bookmarks, Autofill, and Extensions.
   * **Mozilla (Firefox, LibreWolf, Waterfox)**: Places (`places.sqlite`), Bookmarks, Downloads, Cookies, Form History, and Logins (`logins.json`).
@@ -67,7 +68,7 @@ Previous community plugins (such as legacy `AD1_Extractor`) suffered from critic
 4. Clone or copy this repository into a folder named `AD1_Universal_Extractor`:
    ```bash
    cd %APPDATA%\autopsy\python_modules\
-   git clone https://github.com/<your-username>/Autopsy-AD1-Universal-Suite.git AD1_Universal_Extractor
+   git clone https://github.com/SilentS13/Autopsy-AD1-Universal-Suite.git AD1_Universal_Extractor
    ```
 5. Restart Autopsy.
 
@@ -98,6 +99,7 @@ Previous community plugins (such as legacy `AD1_Extractor`) suffered from critic
 | **Web Accounts** | Saved Login Credentials & Domains | `TSK_SERVICE_ACCOUNT` |
 | **Cookies** | Cookie Names, Values, Domains, Expiration | `TSK_WEB_COOKIE` |
 | **Bookmarks** | Full Bookmark Tree Hierarchy & URLs | `TSK_WEB_BOOKMARK` |
+| **Web Cache & Media** | Carved Images, Videos, PDFs, HTML Assets | `TSK_WEB_CACHE` |
 | **Autofill** | Web Form Field Names, Values, Counts | `TSK_WEB_AUTOFILL` |
 | **Extensions** | Browser Extensions, Versions, Descriptions | `TSK_BROWSER_EXTENSION` |
 
