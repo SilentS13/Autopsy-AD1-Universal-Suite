@@ -247,6 +247,8 @@ class AD1UniversalExtractorModule(DataSourceIngestModule):
             # 1. Index all extracted files and metadata from the SQLite catalog
             if os.path.isfile(db_path):
                 self._create_ad1_info_artifacts(skCase, f, db_path)
+                self._create_indexeddb_artifacts(skCase, f, db_path)
+                self._create_messenger_artifacts(skCase, f, db_path)
 
             # 2. Auto-triage: Scan and parse browser and system artifacts directly
             progressBar.progress("Triaging artifacts from " + f.getName())
@@ -328,6 +330,230 @@ class AD1UniversalExtractorModule(DataSourceIngestModule):
 
         except Exception as e:
             self.log(Level.WARNING, "Error creating AD1 file info artifacts: " + str(e))
+
+    def _create_indexeddb_artifacts(self, skCase, source_file, db_path):
+        """Read the SQLite DB created by extract_ad1.exe and create
+        Blackboard artifacts for IndexedDB web apps and AI chat conversations."""
+        try:
+            # Custom artifact type for general web application storage
+            try:
+                web_app_type_id = skCase.addArtifactType(
+                    "TSK_WEB_APP_STORAGE", "Web Applications & IndexedDB")
+            except:
+                web_app_type_id = skCase.getArtifactTypeID("TSK_WEB_APP_STORAGE")
+
+            Class.forName("org.sqlite.JDBC").newInstance()
+            dbConn = DriverManager.getConnection("jdbc:sqlite:%s" % db_path)
+            stmt = dbConn.createStatement()
+
+            # Check if table exists
+            table_check = stmt.executeQuery(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='indexeddb_records'")
+            if not table_check.next():
+                table_check.close()
+                stmt.close()
+                dbConn.close()
+                return
+            table_check.close()
+
+            sql = ("SELECT app_name, app_domain, profile_name, record_type, "
+                   "title, details, date_created, source_file FROM indexeddb_records")
+            rs = stmt.executeQuery(sql)
+
+            modName = AD1UniversalExtractorModuleFactory.moduleName
+
+            while rs.next():
+                try:
+                    app_name = rs.getString("app_name")
+                    app_domain = rs.getString("app_domain")
+                    profile = rs.getString("profile_name")
+                    rec_type = rs.getString("record_type")
+                    title = rs.getString("title")
+                    details = rs.getString("details")
+                    date_created = rs.getLong("date_created")
+
+                    # If it's an AI chat or message thread, post to TSK_MESSAGE
+                    if "AI Conversation" in rec_type or "Chat Session" in rec_type or "Active Session" in rec_type:
+                        art = source_file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_MESSAGE)
+                        attrs = ArrayList()
+                        attrs.add(BlackboardAttribute(
+                            BlackboardAttribute.ATTRIBUTE_TYPE.TSK_MESSAGE_TYPE, modName, rec_type))
+                        attrs.add(BlackboardAttribute(
+                            BlackboardAttribute.ATTRIBUTE_TYPE.TSK_SUBJECT, modName, title))
+                        attrs.add(BlackboardAttribute(
+                            BlackboardAttribute.ATTRIBUTE_TYPE.TSK_TEXT, modName, details))
+                        attrs.add(BlackboardAttribute(
+                            BlackboardAttribute.ATTRIBUTE_TYPE.TSK_PROG_NAME, modName, app_name))
+                        attrs.add(BlackboardAttribute(
+                            BlackboardAttribute.ATTRIBUTE_TYPE.TSK_URL, modName, "https://" + app_domain))
+                        if date_created > 0:
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_DATETIME, modName, date_created))
+                        art.addAttributes(attrs)
+                        self._post_to_blackboard(art)
+
+                    # Otherwise, post as general Web Application Storage
+                    else:
+                        art = source_file.newArtifact(web_app_type_id)
+                        attrs = ArrayList()
+                        attrs.add(BlackboardAttribute(
+                            BlackboardAttribute.ATTRIBUTE_TYPE.TSK_NAME, modName, app_domain))
+                        attrs.add(BlackboardAttribute(
+                            BlackboardAttribute.ATTRIBUTE_TYPE.TSK_PROG_NAME, modName, profile))
+                        attrs.add(BlackboardAttribute(
+                            BlackboardAttribute.ATTRIBUTE_TYPE.TSK_DESCRIPTION, modName, details))
+                        attrs.add(BlackboardAttribute(
+                            BlackboardAttribute.ATTRIBUTE_TYPE.TSK_URL, modName, "https://" + app_domain))
+                        art.addAttributes(attrs)
+                        self._post_to_blackboard(art)
+
+                except Exception as row_ex:
+                    pass
+
+            rs.close()
+            stmt.close()
+            dbConn.close()
+
+            # Fire events for Messages and custom Web App Storage
+            try:
+                IngestServices.getInstance().fireModuleDataEvent(
+                    ModuleDataEvent(modName, BlackboardArtifact.ARTIFACT_TYPE.TSK_MESSAGE))
+            except:
+                pass
+
+        except Exception as e:
+            self.log(Level.WARNING, "Error creating IndexedDB artifacts: " + str(e))
+
+    def _create_messenger_artifacts(self, skCase, source_file, db_path):
+        """Read WhatsApp and Telegram messenger tables from the SQLite DB
+        and create Blackboard artifacts (TSK_CONTACT and TSK_MESSAGE)."""
+        try:
+            Class.forName("org.sqlite.JDBC").newInstance()
+            dbConn = DriverManager.getConnection("jdbc:sqlite:%s" % db_path)
+            stmt = dbConn.createStatement()
+            modName = AD1UniversalExtractorModuleFactory.moduleName
+
+            # 1. WhatsApp Contacts -> TSK_CONTACT
+            try:
+                chk = stmt.executeQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='whatsapp_contacts'")
+                if chk.next():
+                    chk.close()
+                    rs = stmt.executeQuery("SELECT phone_number, formatted_number, profile_name FROM whatsapp_contacts")
+                    while rs.next():
+                        try:
+                            phone = rs.getString("phone_number")
+                            fmt_phone = rs.getString("formatted_number")
+                            profile = rs.getString("profile_name")
+
+                            art = source_file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_CONTACT)
+                            attrs = ArrayList()
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_NAME, modName, fmt_phone))
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_PHONE_NUMBER, modName, fmt_phone))
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_PROG_NAME, modName, "WhatsApp Web (" + profile + ")"))
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_URL, modName, "https://web.whatsapp.com"))
+                            art.addAttributes(attrs)
+                            self._post_to_blackboard(art)
+                        except:
+                            pass
+                    rs.close()
+                else:
+                    chk.close()
+            except:
+                pass
+
+            # 2. WhatsApp Messages / Threads -> TSK_MESSAGE
+            try:
+                chk = stmt.executeQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='whatsapp_messages'")
+                if chk.next():
+                    chk.close()
+                    rs = stmt.executeQuery("SELECT chat_jid, chat_type, total_messages, sent_count, recv_count, sample_message_ids, profile_name FROM whatsapp_messages")
+                    while rs.next():
+                        try:
+                            jid = rs.getString("chat_jid")
+                            ctype = rs.getString("chat_type")
+                            total = rs.getInt("total_messages")
+                            sent = rs.getInt("sent_count")
+                            recv = rs.getInt("recv_count")
+                            mids = rs.getString("sample_message_ids")
+                            profile = rs.getString("profile_name")
+
+                            art = source_file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_MESSAGE)
+                            attrs = ArrayList()
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_MESSAGE_TYPE, modName, ctype))
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_SUBJECT, modName, jid))
+                            text_body = ("Chat JID: " + jid + "\nTotal Activity: " + str(total) +
+                                         " messages (Sent: " + str(sent) + ", Received: " + str(recv) +
+                                         ")\nSample Message IDs: " + mids)
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_TEXT, modName, text_body))
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_PROG_NAME, modName, "WhatsApp Web (" + profile + ")"))
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_URL, modName, "https://web.whatsapp.com"))
+                            art.addAttributes(attrs)
+                            self._post_to_blackboard(art)
+                        except:
+                            pass
+                    rs.close()
+                else:
+                    chk.close()
+            except:
+                pass
+
+            # 3. Telegram Security Artifacts -> TSK_MESSAGE
+            try:
+                chk = stmt.executeQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='telegram_artifacts'")
+                if chk.next():
+                    chk.close()
+                    rs = stmt.executeQuery("SELECT profile_name, artifact_name, details FROM telegram_artifacts")
+                    while rs.next():
+                        try:
+                            profile = rs.getString("profile_name")
+                            aname = rs.getString("artifact_name")
+                            details = rs.getString("details")
+
+                            art = source_file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_MESSAGE)
+                            attrs = ArrayList()
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_MESSAGE_TYPE, modName, "Telegram Security State"))
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_SUBJECT, modName, aname))
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_TEXT, modName, details))
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_PROG_NAME, modName, "Telegram Web (" + profile + ")"))
+                            attrs.add(BlackboardAttribute(
+                                BlackboardAttribute.ATTRIBUTE_TYPE.TSK_URL, modName, "https://web.telegram.org"))
+                            art.addAttributes(attrs)
+                            self._post_to_blackboard(art)
+                        except:
+                            pass
+                    rs.close()
+                else:
+                    chk.close()
+            except:
+                pass
+
+            stmt.close()
+            dbConn.close()
+
+            # Fire events for Contacts and Messages
+            try:
+                IngestServices.getInstance().fireModuleDataEvent(
+                    ModuleDataEvent(modName, BlackboardArtifact.ARTIFACT_TYPE.TSK_CONTACT))
+                IngestServices.getInstance().fireModuleDataEvent(
+                    ModuleDataEvent(modName, BlackboardArtifact.ARTIFACT_TYPE.TSK_MESSAGE))
+            except:
+                pass
+
+        except Exception as e:
+            self.log(Level.WARNING, "Error creating messenger artifacts: " + str(e))
 
     def _add_extracted_as_datasource(self, ad1_output_dir, source_name):
         """Add the extracted directory as a new Logical Files data source

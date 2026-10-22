@@ -25,6 +25,8 @@ import zlib
 import io
 import hashlib
 import sqlite3
+import datetime
+from collections import defaultdict
 from operator import itemgetter
 
 class SafeAD1Reader(object):
@@ -422,6 +424,258 @@ def carve_browser_cache(output_dir, cursor, insert_sql):
         print(f"Browser Cache Carving: successfully recovered {total_carved} media assets into Carved_Browser_Cache.")
 
 
+def parse_indexeddb_webapps(output_dir, cursor):
+    """
+    Scans unpacked IndexedDB LevelDB folders for web application data,
+    recovering ChatGPT conversation titles, DeepSeek chat sessions,
+    Claude AI project threads, and tracking all active web applications.
+    """
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS indexeddb_records (
+            app_name TEXT,
+            app_domain TEXT,
+            profile_name TEXT,
+            record_type TEXT,
+            title TEXT,
+            details TEXT,
+            date_created INTEGER,
+            source_file TEXT
+        )
+    """)
+
+    def parse_iso_to_epoch(iso_str):
+        try:
+            iso_clean = iso_str.rstrip("Z").split(".")[0]
+            dt = datetime.datetime.fromisoformat(iso_clean)
+            return int(dt.timestamp())
+        except:
+            return 0
+
+    batch = []
+    webapps = {}
+
+    for root, dirs, files in os.walk(output_dir):
+        if not root.endswith(".indexeddb.leveldb"):
+            continue
+
+        dirname = os.path.basename(root)
+        domain_match = re.search(r"https?_([^_]+(?:_[^_]+)*?)_\d+\.indexeddb", dirname)
+        domain = domain_match.group(1).replace("_", ".") if domain_match else dirname
+
+        rel = os.path.relpath(root, output_dir)
+        profile = "Default"
+        for p in rel.split(os.sep):
+            if "profile" in p.lower() or p.lower() == "default":
+                profile = p
+                break
+
+        ldb_files = [f for f in files if f.endswith((".log", ".ldb"))]
+        total_size = sum(os.path.getsize(os.path.join(root, f)) for f in ldb_files)
+
+        if domain not in webapps:
+            webapps[domain] = {"profile": profile, "size": total_size, "files": len(ldb_files)}
+        else:
+            webapps[domain]["size"] += total_size
+            webapps[domain]["files"] += len(ldb_files)
+
+        for f in ldb_files:
+            fp = os.path.join(root, f)
+            try:
+                with open(fp, "rb") as fin:
+                    data = fin.read()
+            except:
+                continue
+
+            # 1. ChatGPT Conversations
+            if "chatgpt" in domain:
+                pattern = rb'createdAt"\x1b([\d\-T:\.Z]+)"\x02id"\$([a-f0-9\-]+).*?title"[\x01-\x7f]([^\x00-\x1f"]{3,100})'
+                for m in re.finditer(pattern, data):
+                    created, cid, title = m.groups()
+                    epoch = parse_iso_to_epoch(created.decode(errors="ignore"))
+                    batch.append(("ChatGPT", "chatgpt.com", profile, "AI Conversation",
+                                  title.decode(errors="ignore"), f"Conversation ID: {cid.decode()}", epoch, f))
+
+            # 2. DeepSeek AI Sessions
+            elif "deepseek" in domain:
+                pattern = rb'{"title":"([^"]+)","url":"([^"]+)".*?"time":(\d+)'
+                for m in re.finditer(pattern, data):
+                    t, u, ts = m.groups()
+                    epoch = int(ts.decode()) // 1000 if len(ts) > 10 else int(ts.decode())
+                    batch.append(("DeepSeek AI", "chat.deepseek.com", profile, "Chat Session",
+                                  t.decode(errors="ignore"), f"URL: {u.decode()}", epoch, f))
+
+                for sid in set(re.findall(rb'session_id"\$([a-f0-9\-]{36})', data)):
+                    batch.append(("DeepSeek AI", "chat.deepseek.com", profile, "Active Session",
+                                  "DeepSeek Chat Session", f"Session ID: {sid.decode()}", 0, f))
+
+            # 3. Claude AI Projects/Conversations
+            elif "claude" in domain:
+                pattern = rb'"name"[:\x22]([^\x00-\x1f"\\]{4,80})["\x22].*?"uuid"[:\x22]([a-f0-9\-]{36})'
+                for m in re.finditer(pattern, data):
+                    n, uid = m.groups()
+                    batch.append(("Claude AI", "claude.ai", profile, "Conversation / Project",
+                                  n.decode(errors="ignore"), f"UUID: {uid.decode()}", 0, f))
+
+    # Record all active Web Applications
+    for dom, info in webapps.items():
+        batch.append((dom, dom, info["profile"], "Web App IndexedDB Storage",
+                      f"Web App: {dom}", f"Storage Size: {info['size']} bytes ({info['files']} files)", 0, "IndexedDB"))
+
+    # Deduplicate batch
+    unique_batch = []
+    seen = set()
+    for row in batch:
+        key = (row[0], row[3], row[4], row[5])
+        if key not in seen:
+            seen.add(key)
+            unique_batch.append(row)
+
+    if unique_batch:
+        cursor.executemany("""
+            INSERT INTO indexeddb_records 
+            (app_name, app_domain, profile_name, record_type, title, details, date_created, source_file)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, unique_batch)
+
+    print(f"IndexedDB Parser: recovered {len(unique_batch)} web application & AI conversation records ({len(webapps)} unique web apps).")
+
+
+def parse_messengers(output_dir, cursor):
+    """
+    Scans unpacked browser storage for WhatsApp Web and Telegram Web artifacts.
+    Extracts contacts (phone numbers), chat threads, message counts, and security state.
+    """
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS whatsapp_contacts (
+            phone_number TEXT,
+            formatted_number TEXT,
+            profile_name TEXT,
+            source_file TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS whatsapp_messages (
+            chat_jid TEXT,
+            chat_type TEXT,
+            total_messages INTEGER,
+            sent_count INTEGER,
+            recv_count INTEGER,
+            sample_message_ids TEXT,
+            profile_name TEXT,
+            source_file TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS telegram_artifacts (
+            profile_name TEXT,
+            artifact_name TEXT,
+            details TEXT,
+            source_file TEXT
+        )
+    """)
+
+    msg_pattern = re.compile(rb'(true|false)_([0-9\-]+(?:@c\.us|@g\.us|@lid))_([A-Za-z0-9]+)')
+    phone_pattern = re.compile(rb'([0-9]{10,13})@c\.us')
+
+    total_wa_contacts = 0
+    total_wa_chats = 0
+    total_tg_artifacts = 0
+
+    for root, dirs, files in os.walk(output_dir):
+        r_low = root.lower()
+
+        # Extract profile name
+        rel = os.path.relpath(root, output_dir)
+        profile = "Default"
+        for p in rel.split(os.sep):
+            if "profile" in p.lower() or p.lower() == "default":
+                profile = p
+                break
+
+        # --- WhatsApp Web Parsing ---
+        if "whatsapp" in r_low and root.endswith(".indexeddb.leveldb"):
+            ldb_files = [f for f in files if f.endswith((".log", ".ldb"))]
+            contacts = set()
+            chats = defaultdict(lambda: {"sent": 0, "recv": 0, "mids": []})
+
+            for f in ldb_files:
+                fp = os.path.join(root, f)
+                try:
+                    with open(fp, "rb") as fin:
+                        data = fin.read()
+                except:
+                    continue
+
+                for p in phone_pattern.findall(data):
+                    contacts.add(p.decode())
+
+                for from_me, peer, mid in msg_pattern.findall(data):
+                    fm = from_me.decode()
+                    p = peer.decode()
+                    m = mid.decode()
+
+                    if fm == "true":
+                        chats[p]["sent"] += 1
+                    else:
+                        chats[p]["recv"] += 1
+
+                    if len(chats[p]["mids"]) < 5:
+                        chats[p]["mids"].append(m)
+
+            contact_rows = []
+            for p in contacts:
+                if len(p) == 12:
+                    fmt = f"+{p[:2]} {p[2:7]} {p[7:]}"
+                elif len(p) == 11 and p.startswith("1"):
+                    fmt = f"+1 ({p[1:4]}) {p[4:7]}-{p[7:]}"
+                else:
+                    fmt = f"+{p}"
+                contact_rows.append((p, fmt, profile, "IndexedDB"))
+
+            if contact_rows:
+                cursor.executemany("""
+                    INSERT INTO whatsapp_contacts (phone_number, formatted_number, profile_name, source_file)
+                    VALUES (?, ?, ?, ?)
+                """, contact_rows)
+                total_wa_contacts += len(contact_rows)
+
+            chat_rows = []
+            for peer, d in chats.items():
+                ctype = "WhatsApp Group Chat" if "@g.us" in peer else ("WhatsApp Direct Chat" if "@c.us" in peer else "WhatsApp Linked Device Chat")
+                mids_str = ", ".join(d["mids"])
+                chat_rows.append((peer, ctype, d["sent"] + d["recv"], d["sent"], d["recv"], mids_str, profile, "IndexedDB"))
+
+            if chat_rows:
+                cursor.executemany("""
+                    INSERT INTO whatsapp_messages (chat_jid, chat_type, total_messages, sent_count, recv_count, sample_message_ids, profile_name, source_file)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, chat_rows)
+                total_wa_chats += len(chat_rows)
+
+        # --- Telegram Web Parsing ---
+        elif "telegram" in r_low and "blob" in r_low:
+            for f in files:
+                fp = os.path.join(root, f)
+                try:
+                    sz = os.path.getsize(fp)
+                    if sz > 100 * 1024:  # State blob
+                        with open(fp, "rb") as fin:
+                            data = fin.read()
+                        has_2fa = b'twoFaSettings' in data
+                        has_passcode = b'passcode' in data
+                        is_locked = b'isScreenLocked' in data
+                        details = f"Passcode Lock: {'Configured (LOCKED)' if (has_passcode and is_locked) else ('Configured' if has_passcode else 'None')}, 2FA: {'Enabled' if has_2fa else 'Disabled'}, Client State Blob: {sz} bytes"
+                        cursor.execute("""
+                            INSERT INTO telegram_artifacts (profile_name, artifact_name, details, source_file)
+                            VALUES (?, ?, ?, ?)
+                        """, (profile, "Telegram Web Client State", details, f))
+                        total_tg_artifacts += 1
+                except:
+                    pass
+
+    print(f"Messenger Parser: recovered {total_wa_contacts} WhatsApp contacts, {total_wa_chats} chat threads, {total_tg_artifacts} Telegram security artifacts.")
+
+
 def main():
     if len(sys.argv) < 4:
         print("Usage: extract_ad1_fixed.py <ad1_file> <output_directory> <db3_file>")
@@ -547,6 +801,16 @@ def main():
         # --- Automatically Carve Browser Cache ---
         print("Starting automated browser cache carving...")
         carve_browser_cache(output_dir, cursor, insert_sql)
+        conn.commit()
+
+        # --- Automatically Parse IndexedDB & Web App Data ---
+        print("Starting IndexedDB & Web App triage...")
+        parse_indexeddb_webapps(output_dir, cursor)
+        conn.commit()
+
+        # --- Automatically Parse WhatsApp & Telegram Messengers ---
+        print("Starting WhatsApp & Telegram triage...")
+        parse_messengers(output_dir, cursor)
         conn.commit()
 
     except Exception as ex:

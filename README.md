@@ -50,7 +50,13 @@ Previous community plugins (such as legacy `AD1_Extractor`) suffered from critic
 * **Multi-Segment Support**: Seamlessly combines split images (`.ad1`, `.ad2`, `.ad3`, `.ad4`...) of arbitrary sizes.
 * **Automatic Native Data Source Mount**: Mounts the extracted directory tree directly into Autopsy so standard modules (Keyword Search, Hash Lookup, File Type Identification, Recent Activity, PhotoRec Carver) can run immediately.
 * **Integrated Metadata Catalog**: Every file's original timestamps (MACB) and cryptographic hashes (MD5, SHA-1) are preserved and indexed under `AD1 Extracted File Info`.
-* **Automated Browser Cache Carving & Reassembly**: Automatically scans Chromium Simple Cache (`f_######` streams), decompresses GZIP HTTP streams, strips cache trailers, and carves out raw media and documents (`JPEG`, `PNG`, `WebP`, `MP4`, `HTML`, `PDF`, `SVG`, `ICO`) into `Carved_Browser_Cache/`. Carved assets are indexed into the Blackboard (`TSK_WEB_CACHE`) and instantly viewable in Autopsy's Thumbnail / Image Gallery.
+* **Automated Browser Cache Carving & Reassembly**: Automatically scans Chromium Simple Cache (`f_######` streams), decompresses GZIP HTTP streams, strips cache trailers, and carves out raw media and documents (`JPEG`, `PNG`, `WebP`, `MP4`, `HTML`, `PDF`, `SVG`, `ICO`) into `Carved_Browser_Cache/`.
+* **Native `DerivedFile` Integration**: All carved assets are registered as native `DerivedFile` objects in the SleuthKit database, allowing instant image previews, thumbnail rendering in the Web Cache viewer, and seamless browsing in Autopsy's **Image/Video Gallery**.
+* **Client-Side Web Applications & IndexedDB Triage Engine**: Automatically crawls LevelDB key-value stores across all browser profiles, cataloging 200+ client-side web apps (ProtonVPN, HackTheBox, Samsung, Microsoft 365, Google Cloud, Zoom, Cursor, etc.) along with profile ownership and storage sizes.
+* **Generative AI Chat & Prompt Recovery**: Recovers conversation threads, titles, timestamps, and direct web links (`https://chatgpt.com/c/<id>`) from **ChatGPT**, **DeepSeek AI**, and **Claude AI** directly into Autopsy's native **`Messages`** artifact and **Communications** relationship view.
+* **Web Messengers Triage (WhatsApp Web & Telegram Web)**:
+  * **WhatsApp Web**: Recovers international contact phone numbers into **`Contacts`** (`TSK_CONTACT`) and parses group chats (`@g.us`), direct chats (`@c.us`), and linked devices (`@lid`) with sent/received volume and message IDs into **`Messages`** (`TSK_MESSAGE`).
+  * **Telegram Web**: Recovers client security state, screen lock passcode configuration (`isScreenLocked`), and 2FA status from client state blobs.
 * **Out-of-the-Box Browser Triage**:
   * **Chromium (Chrome, Edge, Brave, Opera, Vivaldi)**: History, Downloads, Search Queries, Cookies, Saved Web Accounts (`Login Data`), Bookmarks, Autofill, and Extensions.
   * **Mozilla (Firefox, LibreWolf, Waterfox)**: Places (`places.sqlite`), Bookmarks, Downloads, Cookies, Form History, and Logins (`logins.json`).
@@ -99,9 +105,13 @@ Previous community plugins (such as legacy `AD1_Extractor`) suffered from critic
 | **Web Accounts** | Saved Login Credentials & Domains | `TSK_SERVICE_ACCOUNT` |
 | **Cookies** | Cookie Names, Values, Domains, Expiration | `TSK_WEB_COOKIE` |
 | **Bookmarks** | Full Bookmark Tree Hierarchy & URLs | `TSK_WEB_BOOKMARK` |
-| **Web Cache & Media** | Carved Images, Videos, PDFs, HTML Assets | `TSK_WEB_CACHE` |
+| **Web Cache & Media** | Carved Images, Videos, PDFs, HTML Assets (`DerivedFile`) | `TSK_WEB_CACHE` |
 | **Autofill** | Web Form Field Names, Values, Counts | `TSK_WEB_AUTOFILL` |
 | **Extensions** | Browser Extensions, Versions, Descriptions | `TSK_BROWSER_EXTENSION` |
+| **Web Applications** | IndexedDB Client-Side Web Apps, Profiles & Storage Sizes | `TSK_WEB_APP_STORAGE` |
+| **Generative AI** | ChatGPT, DeepSeek, Claude AI Threads, Timestamps & Links | `TSK_MESSAGE` |
+| **Messengers (Contacts)** | WhatsApp Web Contacts & Formatted Phone Numbers | `TSK_CONTACT` |
+| **Messengers (Chats)** | WhatsApp Group/Direct Conversations & Telegram Client State | `TSK_MESSAGE` |
 
 ---
 
