@@ -39,6 +39,8 @@ from org.sleuthkit.autopsy.ingest import FileIngestModule
 from org.sleuthkit.autopsy.ingest import IngestModuleFactoryAdapter
 from org.sleuthkit.autopsy.ingest import IngestMessage
 from org.sleuthkit.autopsy.ingest import IngestServices
+from org.sleuthkit.autopsy.ingest import ModuleDataEvent
+from org.sleuthkit.autopsy.ingest import ModuleContentEvent
 from org.sleuthkit.autopsy.coreutils import Logger
 from org.sleuthkit.autopsy.coreutils import PlatformUtil
 from org.sleuthkit.autopsy.casemodule import Case
@@ -178,8 +180,11 @@ class AD1UniversalExtractorModule(DataSourceIngestModule):
         except Exception as e:
             self.log(Level.INFO, "Output directory notice: " + str(e))
 
-        skCase = Case.getCurrentCase().getSleuthkitCase()
-        fileManager = Case.getCurrentCase().getServices().getFileManager()
+        self.current_case = Case.getCurrentCase()
+        self.sk_case = self.current_case.getSleuthkitCase()
+        self.case_dir = self.current_case.getCaseDirectory()
+        skCase = self.sk_case
+        fileManager = self.current_case.getServices().getFileManager()
 
         files = fileManager.findFiles(dataSource, "%", "/")
         ad1_count = 0
@@ -425,6 +430,15 @@ class AD1UniversalExtractorModule(DataSourceIngestModule):
                 # --- Carved Browser Cache Media (Images, Videos, Documents) ---
                 elif "carved_browser_cache" in root.lower():
                     self._parse_carved_cache_file(source_file, full_path, fname, browser_name)
+
+        # Notify UI of new child content and web cache data
+        try:
+            IngestServices.getInstance().fireModuleContentEvent(ModuleContentEvent(source_file))
+            IngestServices.getInstance().fireModuleDataEvent(
+                ModuleDataEvent(AD1UniversalExtractorModuleFactory.moduleName,
+                                BlackboardArtifact.ARTIFACT_TYPE.TSK_WEB_CACHE))
+        except:
+            pass
 
     def _detect_browser_from_path(self, path):
         pl = path.lower()
@@ -837,17 +851,53 @@ class AD1UniversalExtractorModule(DataSourceIngestModule):
     def _parse_carved_cache_file(self, source_file, full_path, fname, browser_name):
         modName = AD1UniversalExtractorModuleFactory.moduleName
         try:
-            art = source_file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_WEB_CACHE)
+            case_dir = getattr(self, 'case_dir', None)
+            if not case_dir:
+                case_dir = Case.getCurrentCase().getCaseDirectory()
+            sk_case = getattr(self, 'sk_case', None)
+            if not sk_case:
+                sk_case = Case.getCurrentCase().getSleuthkitCase()
+
+            rel_path = os.path.relpath(full_path, case_dir).replace('\\', '/')
+            sz = os.path.getsize(full_path)
+            try:
+                mtime = int(os.path.getmtime(full_path))
+            except:
+                mtime = 0
+
+            # Register as native DerivedFile child of the container in the case database
+            derived_file = None
+            try:
+                derived_file = sk_case.addDerivedFile(
+                    fname,
+                    rel_path,
+                    long(sz),
+                    long(0),
+                    long(0),
+                    long(0),
+                    long(mtime),
+                    True,
+                    source_file,
+                    "",
+                    modName,
+                    "2.0",
+                    "Carved Browser Cache",
+                    TskData.EncodingType.NONE
+                )
+            except Exception as d_ex:
+                derived_file = None
+
+            # Attach artifact directly to the derived file (so thumbnails and preview work)
+            target_obj = derived_file if derived_file is not None else source_file
+            art = target_obj.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_WEB_CACHE)
             attrs = ArrayList()
-            attrs.add(BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_PATH, modName, full_path))
+            attrs.add(BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_PATH, modName, rel_path))
             attrs.add(BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_NAME, modName, fname))
             attrs.add(BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_PROG_NAME, modName, browser_name))
-            try:
-                sz = os.path.getsize(full_path)
-                attrs.add(BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_BYTES_SENT, modName, long(sz)))
-            except:
-                pass
+            attrs.add(BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_BYTES_SENT, modName, long(sz)))
+            if mtime > 0:
+                attrs.add(BlackboardAttribute(BlackboardAttribute.ATTRIBUTE_TYPE.TSK_DATETIME_CREATED, modName, long(mtime)))
             art.addAttributes(attrs)
             self._post_to_blackboard(art)
-        except:
+        except Exception as e:
             pass
