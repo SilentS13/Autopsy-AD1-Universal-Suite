@@ -1,5 +1,7 @@
 # AD1 Universal Extractor & Forensics Suite for Autopsy
 
+[![GitHub Release](https://img.shields.io/github/v/release/SilentS13/Autopsy-AD1-Universal-Suite?color=orange&label=Latest%20Release)](https://github.com/SilentS13/Autopsy-AD1-Universal-Suite/releases/latest)
+[![Download Zip](https://img.shields.io/badge/Download-AD1__Universal__Extractor--v1.0.0.zip-brightgreen.svg)](https://github.com/SilentS13/Autopsy-AD1-Universal-Suite/releases/download/v1.0.0/AD1_Universal_Extractor-v1.0.0.zip)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Autopsy Version](https://img.shields.io/badge/Autopsy-4.20%2B%20%7C%204.23%2B-green.svg)](https://www.autopsy.com/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-lightgrey.svg)](https://www.sleuthkit.org/)
@@ -65,18 +67,22 @@ Previous community plugins (such as legacy `AD1_Extractor`) suffered from critic
 
 ## 📦 Installation
 
-1. Open **Autopsy**.
-2. Go to **Tools** → **Python Plugins**.
+### Method A: One-Click Pre-Built Release (Recommended)
+1. Download **[`AD1_Universal_Extractor-v1.0.0.zip`](https://github.com/SilentS13/Autopsy-AD1-Universal-Suite/releases/download/v1.0.0/AD1_Universal_Extractor-v1.0.0.zip)** from the [Latest Release](https://github.com/SilentS13/Autopsy-AD1-Universal-Suite/releases/latest).
+2. Open **Autopsy** and navigate to **Tools** → **Python Plugins**.
 3. Autopsy will open the local Python modules directory:
    ```text
    %APPDATA%\autopsy\python_modules\
    ```
-4. Clone or copy this repository into a folder named `AD1_Universal_Extractor`:
-   ```bash
-   cd %APPDATA%\autopsy\python_modules\
-   git clone https://github.com/SilentS13/Autopsy-AD1-Universal-Suite.git AD1_Universal_Extractor
-   ```
+4. Extract the `.zip` archive directly into that folder (it will create the `AD1_Universal_Extractor` directory containing all necessary binaries and scripts).
 5. Restart Autopsy.
+
+### Method B: Git Clone (For Developers)
+```bash
+cd %APPDATA%\autopsy\python_modules\
+git clone https://github.com/SilentS13/Autopsy-AD1-Universal-Suite.git AD1_Universal_Extractor
+```
+Restart Autopsy after cloning.
 
 ---
 
